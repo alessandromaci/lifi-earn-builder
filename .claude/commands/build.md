@@ -28,10 +28,18 @@ cd <project-name>
 ### 2.2 Install Dependencies
 
 ```bash
-pnpm add @rainbow-me/rainbowkit wagmi viem@2.x @tanstack/react-query
+pnpm add @rainbow-me/rainbowkit wagmi@^2.9.0 viem@2.x @tanstack/react-query
 ```
 
-### 2.3 Environment File
+### 2.3 Fix tsconfig.json
+
+Change the `target` from `ES2017` to `ES2020` (required for BigInt literals used by viem/wagmi):
+
+```json
+"target": "ES2020"
+```
+
+### 2.4 Environment File
 
 Create `.env.local`:
 ```
