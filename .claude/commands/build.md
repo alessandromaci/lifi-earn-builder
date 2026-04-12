@@ -325,7 +325,7 @@ Each card shows:
 - Vault name + protocol name and logo
 - Chain badge
 - Underlying token symbol(s)
-- **APY** prominently displayed (format: `(vault.analytics.apy.total * 100).toFixed(2)%`)
+- **APY** prominently displayed (format: `vault.analytics.apy.total.toFixed(2)%` — the API already returns percentages, do NOT multiply by 100)
 - **TVL** (format: `$${Number(vault.analytics.tvl.usd).toLocaleString()}`)
 - Tags (e.g., "Lending", "Staking")
 - "Deposit" button (disabled if `!vault.isTransactional`, shows "View Only" instead)
