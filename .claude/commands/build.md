@@ -340,55 +340,80 @@ Each card shows:
 
 #### DepositModal (`src/components/DepositModal.tsx`)
 
-This is the critical component. The deposit flow:
+This is the critical component. It uses a single "Deposit" button with auto-quoting — NOT a two-step "Get Quote → Deposit" flow.
 
-1. **Select source token**: Show a dropdown with common tokens on the current chain. For the demo, default to native ETH or USDC on the vault's chain. Include the native token (address: `0x0000000000000000000000000000000000000000`) and USDC.
+**UX pattern:**
+- Quote is fetched automatically when the user types an amount (600ms debounce via `useEffect`)
+- Quote details (estimated output, gas) appear inline as they load
+- Single "Deposit" button with dynamic label: "Enter amount" → "Fetching quote..." → "Deposit" → "Approving..." → "Depositing..."
+- On wallet rejection (user clicks "Reject" in MetaMask), the modal resets to idle — NOT stuck on "Depositing..."
 
-2. **Enter amount**: Input field with balance display. Use wagmi's `useBalance` hook.
+**The deposit flow:**
 
-3. **Get quote**: Call `getDepositQuote()` with:
-   - `fromChain`: current connected chain ID
-   - `toChain`: vault's chain ID
+1. **Select source token**: Dropdown with common tokens on the vault's chain (native ETH + USDC). Use the `COMMON_TOKENS` map keyed by chainId.
+
+2. **Enter amount**: Input field with balance display (`useBalance` hook) and a "Max" button.
+
+3. **Auto-quote**: A `useEffect` watches `[amount, selectedToken, address, vault.chainId, vault.address, currentToken.decimals]` and calls `getDepositQuote()` with 600ms debounce:
+   - `fromChain` / `toChain`: vault's chain ID
    - `fromToken`: selected source token address
-   - `toToken`: **vault's address** (this is the key — the vault address IS the toToken)
+   - `toToken`: **vault's address** (the vault address IS the toToken)
    - `fromAmount`: amount in smallest unit
    - `fromAddress`: connected wallet address
 
-4. **Show quote details**: Display estimated output, fees, route steps.
-
-5. **Approve (if needed)**: If `fromToken` is NOT the native token (not `0x000...000`):
-   - Check allowance using wagmi's contract read
-   - If insufficient, send approval transaction to `quote.estimate.approvalAddress`
-   - Wait for confirmation
+4. **Approve (if needed)**: If `fromToken` is NOT the native token:
+   - Check allowance using `useReadContract` with `erc20Abi.allowance`
+   - If insufficient, call `writeContractAsync` (NOT `writeContract`) for the approval
+   - **CRITICAL: Use async variants** (`writeContractAsync`, `sendTransactionAsync`) so wallet rejections are caught in try/catch and reset the modal to idle
+   - Wait for confirmation via `useWaitForTransactionReceipt`
    - **CRITICAL: Re-fetch the quote after approval** (the original quote's nonce becomes stale)
 
-6. **Execute deposit**: Send the transaction using wagmi's `useSendTransaction`:
+5. **Execute deposit**: Call `sendTransactionAsync` with the fresh quote's `transactionRequest`:
    ```typescript
-   sendTransaction({
-     to: quote.transactionRequest.to,
-     data: quote.transactionRequest.data,
-     value: BigInt(quote.transactionRequest.value || '0'),
-     gas: quote.transactionRequest.gasLimit ? BigInt(quote.transactionRequest.gasLimit) : undefined,
+   await sendTransactionAsync({
+     to: freshQuote.transactionRequest.to as `0x${string}`,
+     data: freshQuote.transactionRequest.data as `0x${string}`,
+     value: freshQuote.transactionRequest.value ? BigInt(freshQuote.transactionRequest.value) : 0n,
+     gas: freshQuote.transactionRequest.gasLimit ? BigInt(freshQuote.transactionRequest.gasLimit) : undefined,
    })
    ```
 
-7. **Poll status**: After tx confirms, poll `pollStatus()` until DONE or FAILED.
+6. **Error handling**: Catch wallet rejections (`UserRejectedRequestError`) and reset step to `'idle'` so the user can try again. Show user-friendly error messages.
 
-8. **Success**: Show success message with link to portfolio page.
+7. **Success**: Show success message with link to portfolio page.
 
 **Important implementation notes:**
 - Use wagmi hooks: `useAccount`, `useBalance`, `useSendTransaction`, `useWaitForTransactionReceipt`, `useReadContract`, `useWriteContract`
-- Handle chain switching: if user is on a different chain than the vault, prompt to switch using wagmi's `useSwitchChain`
+- **ALWAYS use async variants** (`sendTransactionAsync`, `writeContractAsync`) — the non-async versions don't propagate wallet rejections to try/catch, leaving the UI stuck
+- Handle chain switching: if user is on a different chain than the vault, prompt to switch using `useSwitchChain`
 - For native token deposits (ETH), skip the approval step entirely
 - The approval target is `quote.estimate.approvalAddress`, NOT the vault address
 - After approval confirms, ALWAYS re-fetch the quote before sending the deposit tx
 
 #### PositionList (`src/components/PositionList.tsx`)
 
-- Fetch positions using `getPositions(address)` when wallet is connected
-- Display each position: token symbol, protocol, chain, USD balance
+Display positions as a **table** (not cards) with a professional portfolio layout.
+
+**Layout:**
+- Filter bar at top: "All networks" chain dropdown + total portfolio value in USD on the right
+- Table with columns: Network | Asset | Deposits ↓ | Protocol
+- Each row shows one position with hover highlight
+
+**Important:** The positions API only returns `chainId`, `protocolName`, `asset` (address/name/symbol/decimals), `balanceUsd`, and `balanceNative`. Do NOT try to cross-reference with vault data for APY or vault names — the position response has no vault address, and matching by protocol+token is unreliable (multiple vaults per combo). Show only what the API gives you.
+
+**Column details:**
+- **Network**: Map `chainId` to human name using a `CHAIN_NAMES` constant (1→Ethereum, 8453→Base, 42161→Arbitrum, etc.)
+- **Asset**: `asset.name` from the positions response
+- **Deposits**: `{balanceNative} {asset.symbol}` + a subtle `$USD` badge. Format: 4 decimals if < 1, 2 decimals otherwise
+- **Protocol**: `protocolName` with dashes replaced by spaces, capitalized
+
+**Behavior:**
+- Filter by chain via dropdown (populated from chains present in user's positions)
+- Sorted by deposits descending (by USD value)
+- Filter out dust positions with `balanceUsd < 0.01`
 - Show "Connect wallet to view positions" when disconnected
-- Auto-refresh after a deposit succeeds
+- Auto-refresh every 30 seconds
+- Show loading skeleton with table row placeholders while fetching
 
 ### 3.5 Styling
 
